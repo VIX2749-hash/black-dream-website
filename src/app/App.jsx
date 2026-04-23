@@ -6,6 +6,14 @@ import {
   useState,
 } from "react";
 import {
+  browserLocalPersistence,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  setPersistence,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
+import {
   BrowserRouter,
   Link,
   Route,
@@ -14,9 +22,7 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
-
-const announcementText =
-  "GET 5% OFF ON ALL PREPAID ORDERS • FREE SHIPPING ABOVE ₹1500 • BLACK DREAM";
+import { auth as firebaseAuth, firebaseEnabled } from "../lib/firebase";
 
 const categories = [
   "Best Sellers",
@@ -120,6 +126,150 @@ function formatINR(amount) {
   }).format(Number(amount || 0));
 }
 
+function readStoredJson(key, fallback) {
+  try {
+    const stored = window.localStorage.getItem(key);
+    if (!stored) {
+      return fallback;
+    }
+
+    return JSON.parse(stored);
+  } catch (error) {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      // Ignore storage cleanup failures in restricted browsers.
+    }
+
+    return fallback;
+  }
+}
+
+function writeStoredJson(key, value) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage write failures so the UI can still render.
+  }
+}
+
+const defaultCheckoutForm = {
+  fullName: "",
+  phone: "",
+  address: "",
+  city: "",
+  state: "",
+  pincode: "",
+};
+
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
+
+function validateCheckoutForm(form) {
+  const errors = {};
+
+  if (!form.fullName.trim()) {
+    errors.fullName = "Full name is required.";
+  }
+
+  if (!/^\d{10}$/.test(form.phone.trim())) {
+    errors.phone = "Enter a valid 10-digit phone number.";
+  }
+
+  if (!form.address.trim()) {
+    errors.address = "Address is required.";
+  }
+
+  if (!form.city.trim()) {
+    errors.city = "City is required.";
+  }
+
+  if (!form.state.trim()) {
+    errors.state = "State is required.";
+  }
+
+  if (!/^\d{6}$/.test(form.pincode.trim())) {
+    errors.pincode = "Enter a valid 6-digit pincode.";
+  }
+
+  return errors;
+}
+
+function loadRazorpayScript() {
+  if (window.Razorpay) {
+    return Promise.resolve(true);
+  }
+
+  return new Promise((resolve) => {
+    const existing = document.querySelector('script[data-razorpay="true"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve(true), { once: true });
+      existing.addEventListener("error", () => resolve(false), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.dataset.razorpay = "true";
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
+async function createBackendRazorpayOrder({ cart, total, form, email }) {
+  const response = await fetch(`${apiBaseUrl}/payments/razorpay/order`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      amount: total * 100,
+      currency: "INR",
+      email: email || null,
+      receipt: `bd_${Date.now()}`,
+      shipping_address: {
+        full_name: form.fullName,
+        phone: form.phone,
+        address: form.address,
+        city: form.city,
+        state: form.state,
+        pincode: form.pincode,
+      },
+      items: cart.map((item) => ({
+        id: item.id,
+        name: item.name,
+        price: item.price,
+        quantity: item.quantity,
+      })),
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Unable to create Razorpay order.");
+  }
+
+  return response.json();
+}
+
+async function verifyBackendRazorpayPayment(payload) {
+  const response = await fetch(`${apiBaseUrl}/payments/razorpay/verify`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(detail || "Unable to verify Razorpay payment.");
+  }
+
+  return response.json();
+}
+
 function SearchIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
@@ -159,23 +309,80 @@ function useStore() {
   return useContext(StoreContext);
 }
 
+function useScrollDirection() {
+  const [scrollDirection, setScrollDirection] = useState("up");
+
+  useEffect(() => {
+    let lastScrollY = window.scrollY;
+
+    const updateScrollDirection = () => {
+      const scrollY = window.scrollY;
+
+      if (scrollY > lastScrollY) {
+        setScrollDirection("down");
+      } else {
+        setScrollDirection("up");
+      }
+
+      lastScrollY = scrollY > 0 ? scrollY : 0;
+    };
+
+    window.addEventListener("scroll", updateScrollDirection, { passive: true });
+    return () => window.removeEventListener("scroll", updateScrollDirection);
+  }, []);
+
+  return scrollDirection;
+}
+
 function StoreProvider({ children }) {
-  const [cart, setCart] = useState(() => {
-    const stored = window.localStorage.getItem("black-dream-cart");
-    return stored ? JSON.parse(stored) : [];
-  });
-  const [auth, setAuth] = useState(() => {
-    const stored = window.localStorage.getItem("black-dream-auth");
-    return stored ? JSON.parse(stored) : { loggedIn: false, email: "" };
+  const [cart, setCart] = useState(() => readStoredJson("black-dream-cart", []));
+  const [auth, setAuth] = useState({
+    loggedIn: false,
+    email: "",
+    uid: "",
+    loading: true,
+    ready: firebaseEnabled,
   });
 
   useEffect(() => {
-    window.localStorage.setItem("black-dream-cart", JSON.stringify(cart));
+    writeStoredJson("black-dream-cart", cart);
   }, [cart]);
 
   useEffect(() => {
-    window.localStorage.setItem("black-dream-auth", JSON.stringify(auth));
-  }, [auth]);
+    if (!firebaseEnabled || !firebaseAuth) {
+      setAuth({
+        loggedIn: false,
+        email: "",
+        uid: "",
+        loading: false,
+        ready: false,
+      });
+      return undefined;
+    }
+
+    let active = true;
+
+    setPersistence(firebaseAuth, browserLocalPersistence).catch(() => undefined);
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+      if (!active) {
+        return;
+      }
+
+      setAuth({
+        loggedIn: Boolean(user),
+        email: user?.email || "",
+        uid: user?.uid || "",
+        loading: false,
+        ready: true,
+      });
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
 
   function addToCart(product) {
     setCart((items) => {
@@ -211,12 +418,32 @@ function StoreProvider({ children }) {
     );
   }
 
-  function login(email) {
-    setAuth({ loggedIn: true, email });
+  function clearCart() {
+    setCart([]);
   }
 
-  function logout() {
-    setAuth({ loggedIn: false, email: "" });
+  async function login(email, password) {
+    if (!firebaseEnabled || !firebaseAuth) {
+      throw new Error("Firebase is not configured yet.");
+    }
+
+    await signInWithEmailAndPassword(firebaseAuth, email, password);
+  }
+
+  async function signup(email, password) {
+    if (!firebaseEnabled || !firebaseAuth) {
+      throw new Error("Firebase is not configured yet.");
+    }
+
+    await createUserWithEmailAndPassword(firebaseAuth, email, password);
+  }
+
+  async function logout() {
+    if (!firebaseEnabled || !firebaseAuth) {
+      return;
+    }
+
+    await signOut(firebaseAuth);
   }
 
   const value = useMemo(
@@ -224,10 +451,13 @@ function StoreProvider({ children }) {
       products,
       cart,
       auth,
+      firebaseReady: firebaseEnabled,
       addToCart,
       removeFromCart,
       updateQuantity,
+      clearCart,
       login,
+      signup,
       logout,
     }),
     [auth, cart],
@@ -240,16 +470,41 @@ function AppLayout() {
   const location = useLocation();
   const navigate = useNavigate();
   const { cart, auth, logout } = useStore();
+  const direction = useScrollDirection();
   const [scrolled, setScrolled] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 20);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    let previousScroll = window.scrollY;
+
+    const handleScroll = () => {
+      const currentScroll = window.scrollY;
+      const scrollingDown = currentScroll > previousScroll + 4;
+      const scrollingUp = currentScroll < previousScroll - 4;
+
+      setScrolled(currentScroll > 50);
+
+      if (currentScroll <= 50) {
+        setShowSearch(false);
+      } else if (scrollingDown) {
+        setShowSearch(false);
+        setSearchOpen(false);
+      } else if (scrollingUp) {
+        setShowSearch(true);
+      }
+
+      previousScroll = currentScroll;
+    };
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
   useEffect(() => {
+    setSearchOpen(false);
+    setShowSearch(false);
     if (location.hash) {
       const id = location.hash.replace("#", "");
       const target = document.getElementById(id);
@@ -264,6 +519,7 @@ function AppLayout() {
   }, [location]);
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const desktopSearchVisible = searchOpen || (scrolled && showSearch);
 
   function goToHomeSection(sectionId) {
     navigate(`/#${sectionId}`);
@@ -277,12 +533,22 @@ function AppLayout() {
     <div className="site-shell">
       <div className="announcement-bar">
         <div className="announcement-track">
-          <span>{announcementText}</span>
-          <span>{announcementText}</span>
+          <div className="announcement-content">
+            {"GET 5% OFF ON ALL PREPAID ORDERS \u2022 FREE SHIPPING ABOVE \u20B91500 \u2022 BLACK DREAM \u2022"}
+          </div>
+          <div className="announcement-content">
+            {"GET 5% OFF ON ALL PREPAID ORDERS \u2022 FREE SHIPPING ABOVE \u20B91500 \u2022 BLACK DREAM \u2022"}
+          </div>
         </div>
       </div>
 
-      <header className={scrolled ? "site-header compact" : "site-header"}>
+      <header
+        className={
+          scrolled
+            ? `site-header header compact scrolled ${direction === "down" ? "hide" : ""}`.trim()
+            : `site-header header ${direction === "down" ? "hide" : ""}`.trim()
+        }
+      >
         <div className="header-row">
           <Link to="/" className="brand-mark" aria-label="Black Dream home">
             <img src="/assets/black-dream-logo.png" alt="Black Dream logo" />
@@ -300,12 +566,31 @@ function AppLayout() {
           </nav>
 
           <div className="header-tools">
-            <label className="search-box">
+            <div className="desktop-search-shell">
+              <label
+                className={
+                  desktopSearchVisible ? "search-bar search-visible" : "search-bar search-hidden"
+                }
+              >
+                <SearchIcon />
+                <input placeholder="Search pieces" />
+              </label>
+            </div>
+            <button
+              className="icon-link mobile-search-trigger"
+              aria-label="Search"
+              aria-expanded={searchOpen}
+              onClick={() => setSearchOpen((open) => !open)}
+            >
               <SearchIcon />
-              <input placeholder="Search pieces" />
-            </label>
-            <Link to="/login" className="icon-link" aria-label="Login">
+            </button>
+            <Link
+              to="/login"
+              className={auth.loggedIn ? "icon-link logged-in" : "icon-link"}
+              aria-label={auth.loggedIn ? `Logged in as ${auth.email}` : "Login"}
+            >
               <UserIcon />
+              {auth.loggedIn && <small>1</small>}
             </Link>
             <button className="icon-link" aria-label="Wishlist">
               <HeartIcon />
@@ -315,6 +600,13 @@ function AppLayout() {
               {cartCount > 0 && <small>{cartCount}</small>}
             </Link>
           </div>
+        </div>
+
+        <div className={searchOpen ? "mobile-search-row open" : "mobile-search-row"}>
+          <label className="mobile-search-box">
+            <SearchIcon />
+            <input placeholder="Search pieces" />
+          </label>
         </div>
 
         <div className="mobile-nav">
@@ -328,7 +620,7 @@ function AppLayout() {
           {auth.loggedIn ? (
             <>
               <span>Logged in as {auth.email}</span>
-              <button onClick={logout}>Logout</button>
+              <button onClick={() => logout()}>Logout</button>
             </>
           ) : (
             <span>Guest mode</span>
@@ -341,6 +633,7 @@ function AppLayout() {
         <Route path="/shop" element={<ShopPage />} />
         <Route path="/product/:id" element={<ProductPage />} />
         <Route path="/cart" element={<CartPage />} />
+        <Route path="/checkout" element={<CheckoutPage />} />
         <Route path="/login" element={<LoginPage />} />
       </Routes>
 
@@ -372,7 +665,7 @@ function AppLayout() {
 
 function HomePage() {
   return (
-    <main>
+    <main className="main-content">
       <section className="street-hero">
         <div className="hero-shade" />
         <div className="hero-content fade-in">
@@ -459,7 +752,7 @@ function HomePage() {
 
 function ShopPage() {
   return (
-    <main className="page-section routed-page">
+    <main className="main-content page-section routed-page">
       <SectionTitle eyebrow="Shop" title="All Black Dream Products" />
       <ProductGrid items={products} />
     </main>
@@ -474,14 +767,14 @@ function ProductPage() {
 
   if (!product) {
     return (
-      <main className="page-section routed-page">
+      <main className="main-content page-section routed-page">
         <SectionTitle eyebrow="Not Found" title="Product Unavailable" />
       </main>
     );
   }
 
   return (
-    <main className="page-section routed-page">
+    <main className="main-content page-section routed-page">
       <div className="product-page-layout">
         <div className="product-page-media">
           <img src={product.image} alt={product.name} />
@@ -511,7 +804,7 @@ function CartPage() {
   const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   return (
-    <main className="page-section routed-page">
+    <main className="main-content page-section routed-page">
       <SectionTitle eyebrow="Cart" title="Your Cart" />
       <div className="cart-layout">
         <div className="cart-list">
@@ -523,12 +816,20 @@ function CartPage() {
                 <h3>{item.name}</h3>
                 <p>{formatINR(item.price)}</p>
                 <div className="cart-controls">
-                  <input
-                    type="number"
-                    min="1"
-                    value={item.quantity}
-                    onChange={(event) => updateQuantity(item.id, event.target.value)}
-                  />
+                  <div className="quantity-stepper">
+                    <button type="button" onClick={() => updateQuantity(item.id, item.quantity - 1)}>
+                      -
+                    </button>
+                    <input
+                      type="number"
+                      min="1"
+                      value={item.quantity}
+                      onChange={(event) => updateQuantity(item.id, event.target.value)}
+                    />
+                    <button type="button" onClick={() => updateQuantity(item.id, item.quantity + 1)}>
+                      +
+                    </button>
+                  </div>
                   <button onClick={() => removeFromCart(item.id)}>Remove</button>
                 </div>
               </div>
@@ -538,30 +839,302 @@ function CartPage() {
         <aside className="cart-summary-card">
           <h3>Order Summary</h3>
           <div>
+            <span>Items</span>
+            <strong>{cart.reduce((sum, item) => sum + item.quantity, 0)}</strong>
+          </div>
+          <div>
             <span>Total</span>
             <strong>{formatINR(total)}</strong>
           </div>
+          <Link
+            to="/checkout"
+            className={cart.length === 0 ? "checkout-link disabled" : "checkout-link"}
+            aria-disabled={cart.length === 0}
+            onClick={(event) => {
+              if (cart.length === 0) {
+                event.preventDefault();
+              }
+            }}
+          >
+            Proceed to Checkout
+          </Link>
         </aside>
       </div>
     </main>
   );
 }
 
-function LoginPage() {
-  const { auth, login, logout } = useStore();
-  const [email, setEmail] = useState(auth.email || "");
-  const [password, setPassword] = useState("");
+function CheckoutPage() {
+  const navigate = useNavigate();
+  const { cart, clearCart, auth } = useStore();
+  const [form, setForm] = useState(defaultCheckoutForm);
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState("");
+  const [showMockPayment, setShowMockPayment] = useState(false);
 
-  function submit(event) {
+  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const isLocalDev =
+    window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      setStatus("Your cart is empty. Add products before checkout.");
+    } else {
+      setStatus("");
+    }
+  }, [cart.length]);
+
+  function updateField(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+    setErrors((current) => ({ ...current, [field]: "" }));
+  }
+
+  function completeOrder() {
+    clearCart();
+    setSubmitting(false);
+    setShowMockPayment(false);
+    setStatus(`Order Placed. Shipping to ${form.fullName}, ${form.city}.`);
+    setForm(defaultCheckoutForm);
+  }
+
+  async function payNow(event) {
     event.preventDefault();
-    login(email || "guest@blackdream.in");
-    setPassword("");
+
+    const nextErrors = validateCheckoutForm(form);
+    setErrors(nextErrors);
+
+    if (Object.keys(nextErrors).length > 0) {
+      setStatus("Please fill every checkout field correctly.");
+      return;
+    }
+
+    if (cart.length === 0) {
+      setStatus("Your cart is empty. Add products before checkout.");
+      return;
+    }
+
+    setSubmitting(true);
+    setStatus("");
+
+    try {
+      const order = await createBackendRazorpayOrder({
+        cart,
+        total,
+        form,
+        email: auth.email,
+      });
+
+      const razorpayReady = await loadRazorpayScript();
+      if (!razorpayReady || !window.Razorpay) {
+        throw new Error("Razorpay failed to load. Check your connection and try again.");
+      }
+
+      const options = {
+        key: order.key_id,
+        amount: order.amount,
+        currency: order.currency,
+        name: order.business_name,
+        description: "Streetwear order",
+        order_id: order.id,
+        handler: async (response) => {
+          try {
+            await verifyBackendRazorpayPayment(response);
+            completeOrder();
+          } catch (verifyError) {
+            setSubmitting(false);
+            setStatus(verifyError.message || "Payment verification failed.");
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setSubmitting(false);
+            setStatus("Payment was cancelled.");
+          },
+        },
+        prefill: {
+          name: form.fullName,
+          email: auth.email,
+          contact: form.phone,
+        },
+        notes: {
+          address: `${form.address}, ${form.city}, ${form.state} - ${form.pincode}`,
+        },
+        theme: {
+          color: "#111111",
+        },
+      };
+
+      const razorpay = new window.Razorpay(options);
+      razorpay.on("payment.failed", () => {
+        setSubmitting(false);
+        setStatus("Payment failed. Try again.");
+      });
+      razorpay.open();
+    } catch (error) {
+      if (isLocalDev) {
+        setShowMockPayment(true);
+        setSubmitting(false);
+        setStatus("Backend payment is not configured yet, so mock payment is being used locally.");
+        return;
+      }
+
+      setSubmitting(false);
+      setStatus(error.message || "Unable to start payment.");
+    }
   }
 
   return (
-    <main className="page-section routed-page">
+    <main className="main-content page-section routed-page">
+      <SectionTitle eyebrow="Checkout" title="Shipping & Payment" />
+      <div className="checkout-layout">
+        <form onSubmit={payNow} className="checkout-card">
+          {[
+            ["fullName", "Full Name"],
+            ["phone", "Phone"],
+            ["address", "Address"],
+            ["city", "City"],
+            ["state", "State"],
+            ["pincode", "Pincode"],
+          ].map(([field, label]) => (
+            <label key={field}>
+              {label}
+              <input
+                value={form[field]}
+                onChange={(event) => updateField(field, event.target.value)}
+                type={field === "phone" || field === "pincode" ? "tel" : "text"}
+              />
+              {errors[field] && <small className="field-error">{errors[field]}</small>}
+            </label>
+          ))}
+          {status && <p className="checkout-status">{status}</p>}
+          <button type="submit" disabled={submitting || cart.length === 0}>
+            {submitting ? "Opening Razorpay..." : "Pay Now"}
+          </button>
+        </form>
+
+        <aside className="cart-summary-card checkout-summary">
+          <h3>Checkout Summary</h3>
+          {cart.length === 0 ? (
+            <>
+              <p className="empty-state">No items in cart yet.</p>
+              <Link to="/shop" className="checkout-link">
+                Continue Shopping
+              </Link>
+            </>
+          ) : (
+            <>
+              {cart.map((item) => (
+                <div key={item.id}>
+                  <span>
+                    {item.name} x {item.quantity}
+                  </span>
+                  <strong>{formatINR(item.price * item.quantity)}</strong>
+                </div>
+              ))}
+              <div>
+                <span>Total</span>
+                <strong>{formatINR(total)}</strong>
+              </div>
+              <button type="button" className="ghost-link" onClick={() => navigate("/cart")}>
+                Back to Cart
+              </button>
+            </>
+          )}
+        </aside>
+      </div>
+      {showMockPayment && (
+        <div className="mock-payment-overlay">
+          <div className="mock-payment-card">
+            <p>Dev Payment</p>
+            <h3>Mock Razorpay Checkout</h3>
+            <span>
+              Local development mode uses a safe mock payment instead of the live Razorpay method
+              sheet.
+            </span>
+            <div className="mock-payment-summary">
+              <strong>Total</strong>
+              <strong>{formatINR(total)}</strong>
+            </div>
+            <div className="mock-payment-actions">
+              <button type="button" className="ghost-link" onClick={() => setShowMockPayment(false)}>
+                Cancel
+              </button>
+              <button type="button" onClick={completeOrder}>
+                Complete Mock Payment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
+
+function LoginPage() {
+  const navigate = useNavigate();
+  const { auth, firebaseReady, login, signup, logout } = useStore();
+  const [email, setEmail] = useState(auth.email || "");
+  const [password, setPassword] = useState("");
+  const [mode, setMode] = useState("login");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    setEmail(auth.email || "");
+  }, [auth.email]);
+
+  async function submit(event) {
+    event.preventDefault();
+
+    if (!firebaseReady) {
+      setError("Add your Firebase config values to enable authentication.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+
+    try {
+      if (mode === "signup") {
+        await signup(email, password);
+        setMessage("Account created. You're now signed in.");
+      } else {
+        await login(email, password);
+        setMessage("Welcome back.");
+      }
+
+      setPassword("");
+      navigate("/");
+    } catch (authError) {
+      setError(authError.message || "Authentication failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="main-content page-section routed-page">
       <SectionTitle eyebrow="Login" title="Access Your Account" />
       <form onSubmit={submit} className="login-card">
+        <div className="auth-mode-toggle">
+          <button
+            type="button"
+            className={mode === "login" ? "auth-mode-button active" : "auth-mode-button"}
+            onClick={() => setMode("login")}
+          >
+            Login
+          </button>
+          <button
+            type="button"
+            className={mode === "signup" ? "auth-mode-button active" : "auth-mode-button"}
+            onClick={() => setMode("signup")}
+          >
+            Sign Up
+          </button>
+        </div>
         <label>
           Email
           <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" />
@@ -574,11 +1147,21 @@ function LoginPage() {
             type="password"
           />
         </label>
-        <button type="submit">Mock Login</button>
+        {!firebaseReady && (
+          <p className="auth-note">
+            Firebase config is missing. Copy `.env.example` to `.env` and add your Firebase web
+            app keys.
+          </p>
+        )}
+        {error && <p className="auth-error">{error}</p>}
+        {message && <p className="auth-success">{message}</p>}
+        <button type="submit" disabled={submitting || auth.loading}>
+          {submitting ? "Please wait..." : mode === "signup" ? "Create Account" : "Login"}
+        </button>
         {auth.loggedIn && (
           <div className="login-state">
             <span>Logged in as {auth.email}</span>
-            <button type="button" onClick={logout}>
+            <button type="button" onClick={() => logout()}>
               Logout
             </button>
           </div>
@@ -637,3 +1220,4 @@ export default function App() {
     </BrowserRouter>
   );
 }
+
