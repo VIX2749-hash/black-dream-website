@@ -1264,6 +1264,19 @@ button {
   color: #165b3d;
 }
 
+.google-auth-button {
+  width: 100%;
+  margin-top: 0.2rem !important;
+  background: #ffffff !important;
+  color: #111111 !important;
+  border: 1px solid #dedede !important;
+  box-shadow: none !important;
+}
+
+.google-auth-button:hover {
+  background: #f6f6f6 !important;
+}
+
 .login-card button {
   margin-top: 1.25rem;
 }
@@ -1280,6 +1293,14 @@ button {
   gap: 1rem;
   margin-top: 1rem;
   color: #4c4c4c;
+}
+
+.inline-feedback {
+  display: block;
+  margin-top: 0.9rem;
+  color: #165b3d;
+  font-size: 0.88rem;
+  font-weight: 700;
 }
 
 .empty-state {

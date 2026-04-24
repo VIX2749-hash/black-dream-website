@@ -11,6 +11,7 @@ import {
   onAuthStateChanged,
   setPersistence,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
 } from "firebase/auth";
 import {
@@ -23,7 +24,7 @@ import {
   useParams,
   useSearchParams,
 } from "react-router-dom";
-import { auth as firebaseAuth, firebaseEnabled } from "../lib/firebase";
+import { auth as firebaseAuth, firebaseEnabled, googleProvider } from "../lib/firebase";
 
 const categories = [
   "Best Sellers",
@@ -697,6 +698,17 @@ function StoreProvider({ children }) {
     await signOut(firebaseAuth);
   }
 
+  async function loginWithGoogle() {
+    if (!firebaseEnabled || !firebaseAuth || !googleProvider) {
+      throw new Error(
+        "Google sign-in needs Firebase config and Google provider enabled before it can be used.",
+      );
+    }
+
+    googleProvider.setCustomParameters({ prompt: "select_account" });
+    await signInWithPopup(firebaseAuth, googleProvider);
+  }
+
   const value = useMemo(
     () => ({
       products,
@@ -708,6 +720,7 @@ function StoreProvider({ children }) {
       updateQuantity,
       clearCart,
       login,
+      loginWithGoogle,
       signup,
       logout,
     }),
@@ -1101,8 +1114,8 @@ function ShopPage() {
 
 function ProductPage() {
   const { id } = useParams();
-  const navigate = useNavigate();
   const { addToCart } = useStore();
+  const [cartMessage, setCartMessage] = useState("");
   const product = products.find((item) => String(item.id) === id);
 
   if (!product) {
@@ -1132,11 +1145,12 @@ function ProductPage() {
             disabled={product.availability !== "in_stock"}
             onClick={() => {
               addToCart(product);
-              navigate("/cart");
+              setCartMessage(`${product.name} added to cart.`);
             }}
           >
             {product.availability === "in_stock" ? "Add to Cart" : getAvailabilityLabel(product.availability)}
           </button>
+          {cartMessage && <small className="inline-feedback">{cartMessage}</small>}
         </div>
       </div>
     </main>
@@ -1505,7 +1519,7 @@ function SearchResultsPanel({ query, experience, onPickProduct, onPickSuggestion
 
 function LoginPage() {
   const navigate = useNavigate();
-  const { auth, login, signup, logout } = useStore();
+  const { auth, login, loginWithGoogle, signup, logout, firebaseReady } = useStore();
   const [email, setEmail] = useState(auth.email || "");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState("login");
@@ -1554,6 +1568,22 @@ function LoginPage() {
     }
   }
 
+  async function continueWithGoogle() {
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await loginWithGoogle();
+      setMessage("Signed in with Google.");
+      navigate("/");
+    } catch (authError) {
+      setError(authError.message || "Google sign-in failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <main className="main-content page-section routed-page">
       <SectionTitle eyebrow="Login" title="Access Your Account" />
@@ -1561,6 +1591,20 @@ function LoginPage() {
         <p className="auth-note">
           Create an account once, then use the same email and password to sign back in.
         </p>
+        <button
+          type="button"
+          className="google-auth-button"
+          onClick={continueWithGoogle}
+          disabled={submitting || auth.loading || !firebaseReady}
+        >
+          Continue with Google
+        </button>
+        {!firebaseReady && (
+          <p className="auth-note">
+            Google sign-in is ready in the UI, but it needs Firebase Google provider setup before it can
+            work for real users.
+          </p>
+        )}
         <div className="auth-mode-toggle">
           <button
             type="button"

@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,3 +16,4 @@ export const firebaseEnabled = requiredValues.every((key) => Boolean(firebaseCon
 
 export const firebaseApp = firebaseEnabled ? initializeApp(firebaseConfig) : null;
 export const auth = firebaseEnabled ? getAuth(firebaseApp) : null;
+export const googleProvider = firebaseEnabled ? new GoogleAuthProvider() : null;
