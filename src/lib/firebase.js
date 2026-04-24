@@ -2,12 +2,13 @@ import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  apiKey: "AIzaSyDJwpYENbWFAc6m8Yy_TOygKxfrAn3lsfQ",
+  authDomain: "blackdream-7764b.firebaseapp.com",
+  projectId: "blackdream-7764b",
+  storageBucket: "blackdream-7764b.firebasestorage.app",
+  messagingSenderId: "312344811996",
+  appId: "1:312344811996:web:8784622cc88f4ead831719",
+  measurementId: "G-5WF9YSGGFT",
 };
 
 const requiredValues = ["apiKey", "authDomain", "projectId", "appId"];

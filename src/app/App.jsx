@@ -180,14 +180,6 @@ function writeStoredJson(key, value) {
   }
 }
 
-function getLocalAccounts() {
-  return readStoredJson("black-dream-accounts", []);
-}
-
-function saveLocalAccounts(accounts) {
-  writeStoredJson("black-dream-accounts", accounts);
-}
-
 function normalizeSearchValue(value) {
   return String(value || "")
     .toLowerCase()
@@ -242,6 +234,16 @@ function getAvailabilityLabel(status) {
   }
 
   return "In Stock";
+}
+
+function getShortEmail(email) {
+  const value = String(email || "").trim();
+  if (value.length <= 24) {
+    return value;
+  }
+
+  const [namePart = "", domainPart = ""] = value.split("@");
+  return `${namePart.slice(0, 10)}...@${domainPart}`;
 }
 
 function getProductSearchScore(product, normalizedQuery) {
@@ -367,6 +369,29 @@ const defaultCheckoutForm = {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
 const manualPaymentQrSrc = "/assets/manual-payment-qr.png";
+
+function getFirebaseAuthErrorMessage(error) {
+  switch (error?.code) {
+    case "auth/email-already-in-use":
+      return "An account with this email already exists.";
+    case "auth/invalid-email":
+      return "Please enter a valid email address.";
+    case "auth/user-not-found":
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+      return "Incorrect email or password.";
+    case "auth/too-many-requests":
+      return "Too many attempts. Please try again in a little while.";
+    case "auth/popup-closed-by-user":
+      return "Google sign-in was cancelled.";
+    case "auth/popup-blocked":
+      return "Google sign-in popup was blocked. Please allow popups and try again.";
+    case "auth/network-request-failed":
+      return "Network error. Check your connection and try again.";
+    default:
+      return error?.message || "Authentication failed.";
+  }
+}
 
 function validateCheckoutForm(form) {
   const errors = {};
@@ -540,17 +565,11 @@ function useScrollDirection() {
 
 function StoreProvider({ children }) {
   const [cart, setCart] = useState(() => readStoredJson("black-dream-cart", []));
-  const [fallbackAuth, setFallbackAuth] = useState(() =>
-    readStoredJson("black-dream-auth", {
-      loggedIn: false,
-      email: "",
-      uid: "",
-    }),
-  );
   const [auth, setAuth] = useState({
-    loggedIn: fallbackAuth.loggedIn,
-    email: fallbackAuth.email,
-    uid: fallbackAuth.uid,
+    loggedIn: false,
+    email: "",
+    displayName: "",
+    uid: "",
     loading: true,
     ready: firebaseEnabled,
   });
@@ -560,15 +579,12 @@ function StoreProvider({ children }) {
   }, [cart]);
 
   useEffect(() => {
-    writeStoredJson("black-dream-auth", fallbackAuth);
-  }, [fallbackAuth]);
-
-  useEffect(() => {
     if (!firebaseEnabled || !firebaseAuth) {
       setAuth({
-        loggedIn: fallbackAuth.loggedIn,
-        email: fallbackAuth.email,
-        uid: fallbackAuth.uid,
+        loggedIn: false,
+        email: "",
+        displayName: "",
+        uid: "",
         loading: false,
         ready: false,
       });
@@ -587,6 +603,7 @@ function StoreProvider({ children }) {
       setAuth({
         loggedIn: Boolean(user),
         email: user?.email || "",
+        displayName: user?.displayName || "",
         uid: user?.uid || "",
         loading: false,
         ready: true,
@@ -597,7 +614,7 @@ function StoreProvider({ children }) {
       active = false;
       unsubscribe();
     };
-  }, [fallbackAuth]);
+  }, []);
 
   function addToCart(product) {
     setCart((items) => {
@@ -639,20 +656,7 @@ function StoreProvider({ children }) {
 
   async function login(email, password) {
     if (!firebaseEnabled || !firebaseAuth) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const accounts = getLocalAccounts();
-      const account = accounts.find((entry) => entry.email === normalizedEmail);
-
-      if (!account || account.password !== password) {
-        throw new Error("Incorrect email or password.");
-      }
-
-      setFallbackAuth({
-        loggedIn: true,
-        email: account.email,
-        uid: account.uid,
-      });
-      return;
+      throw new Error("Firebase Authentication is not configured.");
     }
 
     await signInWithEmailAndPassword(firebaseAuth, email, password);
@@ -660,26 +664,7 @@ function StoreProvider({ children }) {
 
   async function signup(email, password) {
     if (!firebaseEnabled || !firebaseAuth) {
-      const normalizedEmail = email.trim().toLowerCase();
-      const accounts = getLocalAccounts();
-
-      if (accounts.some((entry) => entry.email === normalizedEmail)) {
-        throw new Error("An account with this email already exists.");
-      }
-
-      const newAccount = {
-        email: normalizedEmail,
-        password,
-        uid: `local_${Date.now()}`,
-      };
-
-      saveLocalAccounts([...accounts, newAccount]);
-      setFallbackAuth({
-        loggedIn: true,
-        email: newAccount.email,
-        uid: newAccount.uid,
-      });
-      return;
+      throw new Error("Firebase Authentication is not configured.");
     }
 
     await createUserWithEmailAndPassword(firebaseAuth, email, password);
@@ -687,12 +672,7 @@ function StoreProvider({ children }) {
 
   async function logout() {
     if (!firebaseEnabled || !firebaseAuth) {
-      setFallbackAuth({
-        loggedIn: false,
-        email: "",
-        uid: "",
-      });
-      return;
+      throw new Error("Firebase Authentication is not configured.");
     }
 
     await signOut(firebaseAuth);
@@ -938,7 +918,10 @@ function AppLayout() {
         <div className="auth-pill">
           {auth.loggedIn ? (
             <>
-              <span>Logged in as {auth.email}</span>
+              <div className="auth-pill-user">
+                <strong>{auth.displayName || auth.email}</strong>
+                <small>{auth.displayName ? getShortEmail(auth.email) : "Firebase account"}</small>
+              </div>
               <button onClick={() => logout()}>Logout</button>
             </>
           ) : (
@@ -1563,7 +1546,7 @@ function LoginPage() {
       setPassword("");
       navigate("/");
     } catch (authError) {
-      setError(authError.message || "Authentication failed.");
+      setError(getFirebaseAuthErrorMessage(authError));
     } finally {
       setSubmitting(false);
     }
@@ -1579,10 +1562,62 @@ function LoginPage() {
       setMessage("Signed in with Google.");
       navigate("/");
     } catch (authError) {
-      setError(authError.message || "Google sign-in failed.");
+      setError(getFirebaseAuthErrorMessage(authError));
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (auth.loggedIn) {
+    const memberName = auth.displayName || auth.email;
+
+    return (
+      <main className="main-content page-section routed-page">
+        <SectionTitle eyebrow="Account" title={`Welcome Back, ${memberName}`} />
+        <section className="account-dashboard">
+          <div className="account-hero-card">
+            <div className="account-avatar">{memberName.charAt(0) || "M"}</div>
+            <div className="account-hero-copy">
+              <p>Signed In</p>
+              <h3>{memberName}</h3>
+              <span>{auth.email}</span>
+            </div>
+            <button type="button" className="ghost-link account-logout-button" onClick={() => logout()}>
+              Logout
+            </button>
+          </div>
+
+          <div className="account-grid">
+            <article className="account-card">
+              <p>Profile</p>
+              <h3>Account Status</h3>
+              <span>Your Black Dream account is active and ready for checkout, tracking, and saved items.</span>
+            </article>
+            <article className="account-card">
+              <p>Orders</p>
+              <h3>No orders yet</h3>
+              <span>Your upcoming purchases and shipping updates will appear here after checkout.</span>
+              <Link to="/shop" className="inline-account-link">
+                Start Shopping
+              </Link>
+            </article>
+            <article className="account-card">
+              <p>Saved</p>
+              <h3>Wishlist & Cart</h3>
+              <span>Jump back into the pieces you liked or finish checking out the items already in your cart.</span>
+              <div className="account-actions">
+                <Link to="/wishlist" className="inline-account-link">
+                  Wishlist
+                </Link>
+                <Link to="/cart" className="inline-account-link">
+                  Cart
+                </Link>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -1602,8 +1637,7 @@ function LoginPage() {
         </button>
         {!firebaseReady && (
           <p className="auth-note">
-            Google sign-in is ready in the UI, but it needs Firebase Google provider setup before it can
-            work for real users.
+            Firebase Authentication is required before login, signup, or Google sign-in can work.
           </p>
         )}
         <div className="auth-mode-toggle">
@@ -1636,7 +1670,7 @@ function LoginPage() {
         </label>
         {error && <p className="auth-error">{error}</p>}
         {message && <p className="auth-success">{message}</p>}
-        <button type="submit" disabled={submitting || auth.loading}>
+        <button type="submit" disabled={submitting || auth.loading || !firebaseReady}>
           {submitting ? "Please wait..." : mode === "signup" ? "Create Account" : "Login"}
         </button>
         {auth.loggedIn && (

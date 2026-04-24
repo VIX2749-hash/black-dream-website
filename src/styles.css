@@ -486,6 +486,7 @@ button {
   justify-content: flex-end;
   color: #555555;
   font-size: 0.76rem;
+  gap: 0.8rem;
 }
 
 .auth-pill a,
@@ -494,6 +495,24 @@ button {
   color: #111111;
   font-size: 0.76rem;
   font-weight: 800;
+}
+
+.auth-pill-user {
+  display: grid;
+  gap: 0.1rem;
+  text-align: right;
+}
+
+.auth-pill-user strong {
+  color: #111111;
+  font-size: 0.8rem;
+  line-height: 1.2;
+}
+
+.auth-pill-user small {
+  color: #767676;
+  font-size: 0.72rem;
+  line-height: 1.2;
 }
 
 .main-content {
@@ -1259,6 +1278,105 @@ button {
   padding: 1.4rem;
 }
 
+.account-dashboard {
+  display: grid;
+  gap: 1.5rem;
+}
+
+.account-hero-card,
+.account-card {
+  border: 1px solid #ededed;
+  border-radius: 1.35rem;
+  background: #ffffff;
+  box-shadow: 0 18px 55px rgba(0, 0, 0, 0.06);
+}
+
+.account-hero-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1.5rem;
+}
+
+.account-avatar {
+  display: grid;
+  width: 4rem;
+  height: 4rem;
+  place-items: center;
+  border-radius: 999px;
+  background: #111111;
+  color: #ffffff;
+  font-size: 1.4rem;
+  font-weight: 900;
+}
+
+.account-hero-copy p,
+.account-card p {
+  margin: 0 0 0.45rem;
+  color: #666666;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.account-hero-copy h3,
+.account-card h3 {
+  margin: 0;
+  color: #111111;
+  font-size: 1.6rem;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+}
+
+.account-hero-copy span,
+.account-card span {
+  display: block;
+  margin-top: 0.55rem;
+  color: #555555;
+  line-height: 1.7;
+}
+
+.account-logout-button {
+  width: auto;
+  margin-top: 0 !important;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.2rem;
+}
+
+.account-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1.4rem;
+}
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.2rem;
+}
+
+.inline-account-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  border-radius: 999px;
+  border: 1px solid #dedede;
+  padding: 0.7rem 1rem;
+  color: #111111;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .auth-mode-toggle {
   display: inline-flex;
   gap: 0.45rem;
@@ -1544,6 +1662,8 @@ button {
   .product-page-layout,
   .checkout-layout,
   .cart-layout,
+  .account-grid,
+  .account-hero-card,
   .site-footer,
   .footer-grid {
     grid-template-columns: 1fr;
