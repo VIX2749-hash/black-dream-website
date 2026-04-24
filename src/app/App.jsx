@@ -21,6 +21,7 @@ import {
   useLocation,
   useNavigate,
   useParams,
+  useSearchParams,
 } from "react-router-dom";
 import { auth as firebaseAuth, firebaseEnabled } from "../lib/firebase";
 
@@ -41,6 +42,8 @@ const products = [
     price: 1999,
     category: "Hoodies & Jackets",
     badge: "Best Seller",
+    availability: "in_stock",
+    keywords: ["hoodie", "oversized", "streetwear", "black hoodie", "winter"],
     image:
       "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=1200&q=80",
     description:
@@ -52,6 +55,8 @@ const products = [
     price: 1299,
     category: "T-Shirts",
     badge: "New Arrival",
+    availability: "in_stock",
+    keywords: ["tshirt", "t-shirt", "tee", "shirt", "black tee", "oversized tee"],
     image:
       "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?auto=format&fit=crop&w=1200&q=80",
     description:
@@ -63,6 +68,8 @@ const products = [
     price: 2199,
     category: "Bottomwear",
     badge: "Trending",
+    availability: "in_stock",
+    keywords: ["cargo", "pants", "trousers", "bottoms", "black cargo"],
     image:
       "https://images.unsplash.com/photo-1516762689617-e1cffcef479d?auto=format&fit=crop&w=1200&q=80",
     description:
@@ -74,6 +81,8 @@ const products = [
     price: 2799,
     category: "Hoodies & Jackets",
     badge: "Limited Drop",
+    availability: "out_of_stock",
+    keywords: ["jacket", "bomber", "outerwear", "black jacket"],
     image:
       "https://images.unsplash.com/photo-1523398002811-999ca8dec234?auto=format&fit=crop&w=1200&q=80",
     description:
@@ -85,6 +94,8 @@ const products = [
     price: 2399,
     category: "Oversized Fits",
     badge: "Popular",
+    availability: "in_stock",
+    keywords: ["denim", "jeans", "wide fit", "oversized", "black denim"],
     image:
       "https://images.unsplash.com/photo-1487222477894-8943e31ef7b2?auto=format&fit=crop&w=1200&q=80",
     description:
@@ -96,11 +107,26 @@ const products = [
     price: 899,
     category: "Accessories",
     badge: "Accessory",
+    availability: "in_stock",
+    keywords: ["cap", "hat", "accessory", "headwear"],
     image:
       "https://images.unsplash.com/photo-1529958030586-3aae4ca485ff?auto=format&fit=crop&w=1200&q=80",
     description:
       "Minimal curved-brim cap with tonal detailing for an understated finishing touch.",
   },
+];
+
+const searchLogicCatalog = [
+  { term: "joggers", label: "Joggers", status: "coming_soon", note: "Coming soon to Bottomwear." },
+  { term: "sweatshirt", label: "Sweatshirts", status: "coming_soon", note: "Coming soon to layered essentials." },
+  { term: "tank top", label: "Tank Tops", status: "coming_soon", note: "Coming soon to summer drops." },
+  { term: "tshirt", label: "T-Shirts", status: "category" },
+  { term: "tee", label: "T-Shirts", status: "category" },
+  { term: "shirt", label: "T-Shirts", status: "category" },
+  { term: "hoodie", label: "Hoodies & Jackets", status: "category" },
+  { term: "jacket", label: "Hoodies & Jackets", status: "category" },
+  { term: "cargo", label: "Bottomwear", status: "category" },
+  { term: "jeans", label: "Oversized Fits", status: "category" },
 ];
 
 const footerColumns = {
@@ -153,6 +179,182 @@ function writeStoredJson(key, value) {
   }
 }
 
+function getLocalAccounts() {
+  return readStoredJson("black-dream-accounts", []);
+}
+
+function saveLocalAccounts(accounts) {
+  writeStoredJson("black-dream-accounts", accounts);
+}
+
+function normalizeSearchValue(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function levenshteinDistance(a, b) {
+  const first = normalizeSearchValue(a);
+  const second = normalizeSearchValue(b);
+
+  if (!first.length) {
+    return second.length;
+  }
+
+  if (!second.length) {
+    return first.length;
+  }
+
+  const matrix = Array.from({ length: first.length + 1 }, () => Array(second.length + 1).fill(0));
+
+  for (let i = 0; i <= first.length; i += 1) {
+    matrix[i][0] = i;
+  }
+
+  for (let j = 0; j <= second.length; j += 1) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= first.length; i += 1) {
+    for (let j = 1; j <= second.length; j += 1) {
+      const cost = first[i - 1] === second[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost,
+      );
+    }
+  }
+
+  return matrix[first.length][second.length];
+}
+
+function getAvailabilityLabel(status) {
+  if (status === "out_of_stock") {
+    return "Out of Stock";
+  }
+
+  if (status === "coming_soon") {
+    return "Coming Soon";
+  }
+
+  return "In Stock";
+}
+
+function getProductSearchScore(product, normalizedQuery) {
+  if (!normalizedQuery) {
+    return 0;
+  }
+
+  const queryTokens = normalizedQuery.split(" ");
+  const haystack = normalizeSearchValue(
+    [product.name, product.category, product.description, ...(product.keywords || [])].join(" "),
+  );
+  const words = haystack.split(" ");
+  let score = 0;
+
+  if (haystack.includes(normalizedQuery)) {
+    score += 10;
+  }
+
+  if (normalizeSearchValue(product.name).includes(normalizedQuery)) {
+    score += 8;
+  }
+
+  queryTokens.forEach((token) => {
+    if (!token) {
+      return;
+    }
+
+    if (words.some((word) => word.startsWith(token))) {
+      score += 4;
+    }
+
+    if (words.some((word) => levenshteinDistance(word, token) <= 1)) {
+      score += 3;
+    }
+
+    if ((product.keywords || []).some((keyword) => levenshteinDistance(keyword, token) <= 2)) {
+      score += 3;
+    }
+  });
+
+  return score;
+}
+
+function getSearchExperience(query) {
+  const normalizedQuery = normalizeSearchValue(query);
+  if (!normalizedQuery) {
+    return { products: [], suggestions: [], emptyMessage: "" };
+  }
+
+  const scoredProducts = products
+    .map((product) => {
+      return { product, score: getProductSearchScore(product, normalizedQuery) };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 5);
+
+  const suggestionPool = [
+    ...searchLogicCatalog.map((item) => ({
+      type: item.status,
+      label: item.label,
+      note: item.note || "",
+      score:
+        normalizeSearchValue(item.term).includes(normalizedQuery) ||
+        normalizedQuery.includes(normalizeSearchValue(item.term))
+          ? 8
+          : levenshteinDistance(item.term, normalizedQuery) <= 2
+            ? 6
+            : 0,
+    })),
+    ...products.map((product) => ({
+      type: product.availability,
+      label: product.name,
+      note:
+        product.availability === "out_of_stock"
+          ? "Currently unavailable."
+          : product.availability === "coming_soon"
+            ? "Launching soon."
+            : product.category,
+      score:
+        levenshteinDistance(product.name, normalizedQuery) <= 3 ||
+        (product.keywords || []).some((keyword) => levenshteinDistance(keyword, normalizedQuery) <= 2)
+          ? 5
+          : 0,
+    })),
+  ];
+
+  const suggestions = suggestionPool
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .filter((item, index, list) => list.findIndex((entry) => entry.label === item.label) === index)
+    .slice(0, 4);
+
+  let emptyMessage = "";
+  if (scoredProducts.length === 0) {
+    const closestSuggestion = suggestions[0];
+    if (closestSuggestion?.type === "coming_soon") {
+      emptyMessage = `${closestSuggestion.label} is coming soon.`;
+    } else if (closestSuggestion?.type === "out_of_stock") {
+      emptyMessage = `${closestSuggestion.label} is out of stock right now.`;
+    } else if (closestSuggestion) {
+      emptyMessage = `Showing related search ideas for "${query}".`;
+    } else {
+      emptyMessage = `No exact match for "${query}". Try hoodie, tee, cargo, cap, or denim.`;
+    }
+  }
+
+  return {
+    products: scoredProducts.map((entry) => entry.product),
+    suggestions,
+    emptyMessage,
+  };
+}
+
 const defaultCheckoutForm = {
   fullName: "",
   phone: "",
@@ -163,6 +365,7 @@ const defaultCheckoutForm = {
 };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api";
+const manualPaymentQrSrc = "/assets/manual-payment-qr.png";
 
 function validateCheckoutForm(form) {
   const errors = {};
@@ -336,10 +539,17 @@ function useScrollDirection() {
 
 function StoreProvider({ children }) {
   const [cart, setCart] = useState(() => readStoredJson("black-dream-cart", []));
+  const [fallbackAuth, setFallbackAuth] = useState(() =>
+    readStoredJson("black-dream-auth", {
+      loggedIn: false,
+      email: "",
+      uid: "",
+    }),
+  );
   const [auth, setAuth] = useState({
-    loggedIn: false,
-    email: "",
-    uid: "",
+    loggedIn: fallbackAuth.loggedIn,
+    email: fallbackAuth.email,
+    uid: fallbackAuth.uid,
     loading: true,
     ready: firebaseEnabled,
   });
@@ -349,11 +559,15 @@ function StoreProvider({ children }) {
   }, [cart]);
 
   useEffect(() => {
+    writeStoredJson("black-dream-auth", fallbackAuth);
+  }, [fallbackAuth]);
+
+  useEffect(() => {
     if (!firebaseEnabled || !firebaseAuth) {
       setAuth({
-        loggedIn: false,
-        email: "",
-        uid: "",
+        loggedIn: fallbackAuth.loggedIn,
+        email: fallbackAuth.email,
+        uid: fallbackAuth.uid,
         loading: false,
         ready: false,
       });
@@ -382,7 +596,7 @@ function StoreProvider({ children }) {
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [fallbackAuth]);
 
   function addToCart(product) {
     setCart((items) => {
@@ -424,7 +638,20 @@ function StoreProvider({ children }) {
 
   async function login(email, password) {
     if (!firebaseEnabled || !firebaseAuth) {
-      throw new Error("Firebase is not configured yet.");
+      const normalizedEmail = email.trim().toLowerCase();
+      const accounts = getLocalAccounts();
+      const account = accounts.find((entry) => entry.email === normalizedEmail);
+
+      if (!account || account.password !== password) {
+        throw new Error("Incorrect email or password.");
+      }
+
+      setFallbackAuth({
+        loggedIn: true,
+        email: account.email,
+        uid: account.uid,
+      });
+      return;
     }
 
     await signInWithEmailAndPassword(firebaseAuth, email, password);
@@ -432,7 +659,26 @@ function StoreProvider({ children }) {
 
   async function signup(email, password) {
     if (!firebaseEnabled || !firebaseAuth) {
-      throw new Error("Firebase is not configured yet.");
+      const normalizedEmail = email.trim().toLowerCase();
+      const accounts = getLocalAccounts();
+
+      if (accounts.some((entry) => entry.email === normalizedEmail)) {
+        throw new Error("An account with this email already exists.");
+      }
+
+      const newAccount = {
+        email: normalizedEmail,
+        password,
+        uid: `local_${Date.now()}`,
+      };
+
+      saveLocalAccounts([...accounts, newAccount]);
+      setFallbackAuth({
+        loggedIn: true,
+        email: newAccount.email,
+        uid: newAccount.uid,
+      });
+      return;
     }
 
     await createUserWithEmailAndPassword(firebaseAuth, email, password);
@@ -440,6 +686,11 @@ function StoreProvider({ children }) {
 
   async function logout() {
     if (!firebaseEnabled || !firebaseAuth) {
+      setFallbackAuth({
+        loggedIn: false,
+        email: "",
+        uid: "",
+      });
       return;
     }
 
@@ -474,6 +725,7 @@ function AppLayout() {
   const [scrolled, setScrolled] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   useEffect(() => {
     let previousScroll = window.scrollY;
@@ -520,6 +772,7 @@ function AppLayout() {
 
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const desktopSearchVisible = searchOpen || (scrolled && showSearch);
+  const searchExperience = getSearchExperience(searchQuery);
 
   function goToHomeSection(sectionId) {
     navigate(`/#${sectionId}`);
@@ -527,6 +780,20 @@ function AppLayout() {
 
   function scrollToTop() {
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function submitSearch(event) {
+    event.preventDefault();
+
+    const firstProduct = searchExperience.products[0];
+    if (firstProduct) {
+      navigate(`/product/${firstProduct.id}`);
+      setSearchOpen(false);
+      return;
+    }
+
+    navigate(`/shop?q=${encodeURIComponent(searchQuery.trim())}`);
+    setSearchOpen(false);
   }
 
   return (
@@ -567,14 +834,34 @@ function AppLayout() {
 
           <div className="header-tools">
             <div className="desktop-search-shell">
-              <label
+              <form
                 className={
                   desktopSearchVisible ? "search-bar search-visible" : "search-bar search-hidden"
                 }
+                onSubmit={submitSearch}
               >
                 <SearchIcon />
-                <input placeholder="Search pieces" />
-              </label>
+                <input
+                  placeholder="Search pieces"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                />
+                {searchQuery.trim() && (
+                  <SearchResultsPanel
+                    query={searchQuery}
+                    experience={searchExperience}
+                    onPickProduct={(productId) => {
+                      navigate(`/product/${productId}`);
+                      setSearchOpen(false);
+                    }}
+                    onPickSuggestion={(value) => {
+                      setSearchQuery(value);
+                      navigate(`/shop?q=${encodeURIComponent(value)}`);
+                      setSearchOpen(false);
+                    }}
+                  />
+                )}
+              </form>
             </div>
             <button
               className="icon-link mobile-search-trigger"
@@ -592,9 +879,9 @@ function AppLayout() {
               <UserIcon />
               {auth.loggedIn && <small>1</small>}
             </Link>
-            <button className="icon-link" aria-label="Wishlist">
+            <Link to="/wishlist" className="icon-link" aria-label="Wishlist">
               <HeartIcon />
-            </button>
+            </Link>
             <Link to="/cart" className="icon-link" aria-label="Cart">
               <CartIcon />
               {cartCount > 0 && <small>{cartCount}</small>}
@@ -603,10 +890,29 @@ function AppLayout() {
         </div>
 
         <div className={searchOpen ? "mobile-search-row open" : "mobile-search-row"}>
-          <label className="mobile-search-box">
+          <div className="mobile-search-box">
             <SearchIcon />
-            <input placeholder="Search pieces" />
-          </label>
+            <input
+              placeholder="Search pieces"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+            />
+            {searchQuery.trim() && (
+              <SearchResultsPanel
+                query={searchQuery}
+                experience={searchExperience}
+                onPickProduct={(productId) => {
+                  navigate(`/product/${productId}`);
+                  setSearchOpen(false);
+                }}
+                onPickSuggestion={(value) => {
+                  setSearchQuery(value);
+                  navigate(`/shop?q=${encodeURIComponent(value)}`);
+                  setSearchOpen(false);
+                }}
+              />
+            )}
+          </div>
         </div>
 
         <div className="mobile-nav">
@@ -623,7 +929,7 @@ function AppLayout() {
               <button onClick={() => logout()}>Logout</button>
             </>
           ) : (
-            <span>Guest mode</span>
+            <Link to="/login">Login / Sign Up</Link>
           )}
         </div>
       </header>
@@ -634,6 +940,7 @@ function AppLayout() {
         <Route path="/product/:id" element={<ProductPage />} />
         <Route path="/cart" element={<CartPage />} />
         <Route path="/checkout" element={<CheckoutPage />} />
+        <Route path="/wishlist" element={<WishlistPage />} />
         <Route path="/login" element={<LoginPage />} />
       </Routes>
 
@@ -751,10 +1058,43 @@ function HomePage() {
 }
 
 function ShopPage() {
+  const [searchParams] = useSearchParams();
+  const searchQuery = searchParams.get("q") || "";
+  const searchExperience = getSearchExperience(searchQuery);
+  const visibleProducts = searchQuery.trim() ? searchExperience.products : products;
+
   return (
     <main className="main-content page-section routed-page">
-      <SectionTitle eyebrow="Shop" title="All Black Dream Products" />
-      <ProductGrid items={products} />
+      <SectionTitle
+        eyebrow={searchQuery.trim() ? "Search Results" : "Shop"}
+        title={searchQuery.trim() ? `Results for "${searchQuery}"` : "All Black Dream Products"}
+      />
+
+      {searchQuery.trim() && (
+        <div className="shop-search-feedback">
+          {visibleProducts.length > 0 ? (
+            <p>
+              Showing {visibleProducts.length} match{visibleProducts.length > 1 ? "es" : ""} for
+              <strong> {searchQuery}</strong>.
+            </p>
+          ) : (
+            <>
+              <p>{searchExperience.emptyMessage}</p>
+              {searchExperience.suggestions.length > 0 && (
+                <div className="shop-search-suggestions">
+                  {searchExperience.suggestions.map((suggestion) => (
+                    <span key={`${suggestion.type}-${suggestion.label}`} className="shop-suggestion-chip">
+                      {suggestion.label} - {suggestion.note || getAvailabilityLabel(suggestion.type)}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      <ProductGrid items={visibleProducts} />
     </main>
   );
 }
@@ -782,16 +1122,20 @@ function ProductPage() {
         <div className="product-page-copy">
           <p>{product.category}</p>
           <h1>{product.name}</h1>
+          <em className={`availability-pill ${product.availability}`}>
+            {getAvailabilityLabel(product.availability)}
+          </em>
           <strong>{formatINR(product.price)}</strong>
           <span>{product.description}</span>
           <button
             className="hero-button dark"
+            disabled={product.availability !== "in_stock"}
             onClick={() => {
               addToCart(product);
               navigate("/cart");
             }}
           >
-            Add to Cart
+            {product.availability === "in_stock" ? "Add to Cart" : getAvailabilityLabel(product.availability)}
           </button>
         </div>
       </div>
@@ -872,6 +1216,7 @@ function CheckoutPage() {
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState("");
   const [showMockPayment, setShowMockPayment] = useState(false);
+  const [qrUnavailable, setQrUnavailable] = useState(false);
 
   const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const isLocalDev =
@@ -894,6 +1239,7 @@ function CheckoutPage() {
     clearCart();
     setSubmitting(false);
     setShowMockPayment(false);
+    setQrUnavailable(false);
     setStatus(`Order Placed. Shipping to ${form.fullName}, ${form.city}.`);
     setForm(defaultCheckoutForm);
   }
@@ -1046,12 +1392,28 @@ function CheckoutPage() {
       {showMockPayment && (
         <div className="mock-payment-overlay">
           <div className="mock-payment-card">
-            <p>Dev Payment</p>
-            <h3>Mock Razorpay Checkout</h3>
+            <p>QR Payment</p>
+            <h3>Scan to Pay</h3>
             <span>
-              Local development mode uses a safe mock payment instead of the live Razorpay method
-              sheet.
+              Local development mode is using a manual QR checkout so you can test a real scan-and-pay
+              flow before the live gateway is fully connected.
             </span>
+            <div className="mock-payment-qr-block">
+              {!qrUnavailable ? (
+                <img
+                  src={manualPaymentQrSrc}
+                  alt="Manual payment QR code"
+                  className="mock-payment-qr"
+                  onError={() => setQrUnavailable(true)}
+                />
+              ) : (
+                <div className="mock-payment-qr-fallback">
+                  QR image not added yet. Put your payment QR image at
+                  <strong> /public/assets/manual-payment-qr.png</strong>.
+                </div>
+              )}
+              <small>Scan the QR, finish payment, then click the confirm button below.</small>
+            </div>
             <div className="mock-payment-summary">
               <strong>Total</strong>
               <strong>{formatINR(total)}</strong>
@@ -1061,7 +1423,7 @@ function CheckoutPage() {
                 Cancel
               </button>
               <button type="button" onClick={completeOrder}>
-                Complete Mock Payment
+                I Have Paid
               </button>
             </div>
           </div>
@@ -1071,9 +1433,79 @@ function CheckoutPage() {
   );
 }
 
+function WishlistPage() {
+  return (
+    <main className="main-content page-section routed-page">
+      <SectionTitle eyebrow="Wishlist" title="Saved Pieces" />
+      <div className="login-card">
+        <p className="empty-state">
+          Your wishlist is ready. Start saving the Black Dream pieces you want to come back to.
+        </p>
+        <Link to="/shop" className="checkout-link">
+          Browse Products
+        </Link>
+      </div>
+    </main>
+  );
+}
+
+function SearchResultsPanel({ query, experience, onPickProduct, onPickSuggestion }) {
+  return (
+    <div className="search-results-panel">
+      {experience.products.length > 0 && (
+        <div className="search-results-group">
+          <p>Products</p>
+          {experience.products.map((product) => (
+            <button
+              key={product.id}
+              type="button"
+              className="search-result-item"
+              onClick={() => onPickProduct(product.id)}
+            >
+              <span>
+                <strong>{product.name}</strong>
+                <small>{product.category}</small>
+              </span>
+              <em className={`availability-pill ${product.availability}`}>
+                {getAvailabilityLabel(product.availability)}
+              </em>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {experience.suggestions.length > 0 && (
+        <div className="search-results-group">
+          <p>Related</p>
+          {experience.suggestions.map((suggestion) => (
+            <button
+              key={`${suggestion.type}-${suggestion.label}`}
+              type="button"
+              className="search-result-hint"
+              onClick={() => onPickSuggestion?.(suggestion.label)}
+            >
+              <strong>{suggestion.label}</strong>
+              <small>
+                {suggestion.note || getAvailabilityLabel(suggestion.type).replace("In Stock", "Available")}
+              </small>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {experience.emptyMessage && (
+        <div className="search-empty-state">
+          <strong>No direct match for "{query}"</strong>
+          <small>{experience.emptyMessage}</small>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LoginPage() {
   const navigate = useNavigate();
-  const { auth, firebaseReady, login, signup, logout } = useStore();
+  const { auth, login, signup, logout } = useStore();
   const [email, setEmail] = useState(auth.email || "");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState("login");
@@ -1088,8 +1520,15 @@ function LoginPage() {
   async function submit(event) {
     event.preventDefault();
 
-    if (!firebaseReady) {
-      setError("Add your Firebase config values to enable authentication.");
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      setError("Please enter your email.");
+      return;
+    }
+
+    if (password.trim().length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
 
@@ -1099,10 +1538,10 @@ function LoginPage() {
 
     try {
       if (mode === "signup") {
-        await signup(email, password);
+        await signup(normalizedEmail, password);
         setMessage("Account created. You're now signed in.");
       } else {
-        await login(email, password);
+        await login(normalizedEmail, password);
         setMessage("Welcome back.");
       }
 
@@ -1119,6 +1558,9 @@ function LoginPage() {
     <main className="main-content page-section routed-page">
       <SectionTitle eyebrow="Login" title="Access Your Account" />
       <form onSubmit={submit} className="login-card">
+        <p className="auth-note">
+          Create an account once, then use the same email and password to sign back in.
+        </p>
         <div className="auth-mode-toggle">
           <button
             type="button"
@@ -1147,12 +1589,6 @@ function LoginPage() {
             type="password"
           />
         </label>
-        {!firebaseReady && (
-          <p className="auth-note">
-            Firebase config is missing. Copy `.env.example` to `.env` and add your Firebase web
-            app keys.
-          </p>
-        )}
         {error && <p className="auth-error">{error}</p>}
         {message && <p className="auth-success">{message}</p>}
         <button type="submit" disabled={submitting || auth.loading}>
@@ -1191,9 +1627,17 @@ function ProductGrid({ items }) {
             <Link to={`/product/${product.id}`}>
               <h3>{product.name}</h3>
             </Link>
+            <em className={`availability-pill ${product.availability}`}>
+              {getAvailabilityLabel(product.availability)}
+            </em>
             <div>
               <strong>{formatINR(product.price)}</strong>
-              <button onClick={() => addToCart(product)}>Add to Cart</button>
+              <button
+                disabled={product.availability !== "in_stock"}
+                onClick={() => addToCart(product)}
+              >
+                {product.availability === "in_stock" ? "Add to Cart" : getAvailabilityLabel(product.availability)}
+              </button>
             </div>
           </div>
         </article>
