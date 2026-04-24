@@ -804,6 +804,55 @@ button {
   font-size: 1rem;
 }
 
+.product-action-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.cart-plus-one,
+.inline-feedback {
+  position: absolute;
+  right: 0.5rem;
+  bottom: calc(100% + 0.35rem);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  background: #111111;
+  color: #ffffff;
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  animation: cartPlusOnePop 1.2s ease forwards;
+  pointer-events: none;
+}
+
+@keyframes cartPlusOnePop {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9);
+  }
+
+  20% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  80% {
+    opacity: 1;
+    transform: translateY(-8px) scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(-14px) scale(0.96);
+  }
+}
+
 .dark-band,
 .track-panel {
   display: grid;
@@ -1293,14 +1342,6 @@ button {
   gap: 1rem;
   margin-top: 1rem;
   color: #4c4c4c;
-}
-
-.inline-feedback {
-  display: block;
-  margin-top: 0.9rem;
-  color: #165b3d;
-  font-size: 0.88rem;
-  font-weight: 700;
 }
 
 .empty-state {

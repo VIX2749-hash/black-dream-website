@@ -1145,7 +1145,8 @@ function ProductPage() {
             disabled={product.availability !== "in_stock"}
             onClick={() => {
               addToCart(product);
-              setCartMessage(`${product.name} added to cart.`);
+              setCartMessage("+1");
+              window.setTimeout(() => setCartMessage(""), 1200);
             }}
           >
             {product.availability === "in_stock" ? "Add to Cart" : getAvailabilityLabel(product.availability)}
@@ -1653,6 +1654,15 @@ function LoginPage() {
 
 function ProductGrid({ items }) {
   const { addToCart } = useStore();
+  const [addedProductId, setAddedProductId] = useState(null);
+
+  function handleAddToCart(product) {
+    addToCart(product);
+    setAddedProductId(product.id);
+    window.setTimeout(() => {
+      setAddedProductId((current) => (current === product.id ? null : current));
+    }, 1200);
+  }
 
   return (
     <div className="product-grid">
@@ -1676,12 +1686,15 @@ function ProductGrid({ items }) {
             </em>
             <div>
               <strong>{formatINR(product.price)}</strong>
-              <button
-                disabled={product.availability !== "in_stock"}
-                onClick={() => addToCart(product)}
-              >
-                {product.availability === "in_stock" ? "Add to Cart" : getAvailabilityLabel(product.availability)}
-              </button>
+              <div className="product-action-wrap">
+                <button
+                  disabled={product.availability !== "in_stock"}
+                  onClick={() => handleAddToCart(product)}
+                >
+                  {product.availability === "in_stock" ? "Add to Cart" : getAvailabilityLabel(product.availability)}
+                </button>
+                {addedProductId === product.id && <small className="cart-plus-one">+1</small>}
+              </div>
             </div>
           </div>
         </article>
